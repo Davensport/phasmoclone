@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Hunter 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: white; font-family: 'Courier New', Courier, monospace; user-select: none; }
+        #game-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; background: rgba(255,255,255,0.5); border-radius: 50%; transform: translate(-50%, -50%); }
+        #menus { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; flex-direction: column; pointer-events: auto; }
+        .hidden { display: none !important; }
+        
+        /* EMF Meter */
+        .emf-led { width: 15px; height: 30px; border-radius: 3px; background-color: #333; margin: 0 2px; transition: background-color 0.1s; }
+        .emf-1.active { background-color: #0f0; box-shadow: 0 0 10px #0f0; }
+        .emf-2.active { background-color: #adff2f; box-shadow: 0 0 10px #adff2f; }
+        .emf-3.active { background-color: #ff0; box-shadow: 0 0 10px #ff0; }
+        .emf-4.active { background-color: #ffa500; box-shadow: 0 0 10px #ffa500; }
+        .emf-5.active { background-color: #f00; box-shadow: 0 0 10px #f00; }
+
+        /* Journal */
+        #journal { width: 80%; max-width: 800px; height: 80%; background: #e0d0b8; color: #332; border-radius: 10px; padding: 20px; box-shadow: inset 0 0 50px rgba(0,0,0,0.5); display: flex; font-family: 'Georgia', serif; }
+        .journal-page { flex: 1; padding: 20px; border-right: 2px dashed #bba; overflow-y: auto; }
+        .journal-page:last-child { border-right: none; }
+        .evidence-btn { padding: 5px 10px; margin: 5px; border: 1px solid #332; border-radius: 5px; cursor: pointer; transition: all 0.2s; background: transparent; }
+        .evidence-btn.selected { background: #332; color: #e0d0b8; text-decoration: line-through; }
+        .ghost-guess-btn { display: block; width: 100%; padding: 10px; margin: 5px 0; background: #c0b098; border: 1px solid #887; cursor: pointer; text-align: left; }
+        .ghost-guess-btn:hover { background: #a09078; }
+        .ghost-guess-btn.impossible { opacity: 0.3; text-decoration: line-through; }
+        
+        /* Screen FX */
+        #camera-overlay { position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(0, 255, 0, 0.1); border: 5px solid #222; box-shadow: inset 0 0 100px rgba(0,0,0,0.8); mix-blend-mode: multiply; z-index: 5; pointer-events: none; }
+        #camera-rec { position: absolute; top: 20px; right: 30px; color: red; font-weight: bold; font-family: sans-serif; font-size: 24px; animation: blink 1s infinite; z-index: 6;}
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+
+        /* Inventory */
+        .inv-slot { border: 2px solid #555; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; margin: 0 5px; background: rgba(0,0,0,0.5); font-size: 24px; color: #aaa; transition: all 0.2s;}
+        .inv-slot.active { border-color: #fff; color: #fff; transform: scale(1.1); box-shadow: 0 0 10px rgba(255,255,255,0.5); }
+    </style>
+</head>
+<body>
+
+    <canvas id="game-canvas"></canvas>
+    
+    <!-- Camera Tool Overlay -->
+    <div id="camera-overlay" class="hidden"></div>
+    <div id="camera-rec" class="hidden">● REC</div>
+
+    <div id="ui-layer">
+        <!-- Top Info -->
+        <div class="p-4 flex justify-between items-start text-shadow">
+            <div>
+                <h1 class="text-2xl font-bold text-red-500">Paranormal Investigation</h1>
+                <p class="text-gray-300">Location: Abandoned House</p>
+                <p class="text-sm mt-2 text-gray-400" id="room-indicator">Room: Van</p>
+            </div>
+            <div class="text-right">
+                <p>Press <kbd class="bg-gray-800 px-1 rounded border border-gray-600">J</kbd> for Journal</p>
+                <p>Press <kbd class="bg-gray-800 px-1 rounded border border-gray-600">F</kbd> to Interact / Place Tool</p>
+                <p>Press <kbd class="bg-gray-800 px-1 rounded border border-gray-600">V</kbd> to use Spirit Box</p>
+            </div>
+        </div>
+
+        <div id="crosshair"></div>
+
+        <!-- Bottom Tools & Inventory -->
+        <div class="p-4 flex flex-col items-center">
+            
+            <!-- Tool Specific UI -->
+            <div id="tool-ui-container" class="mb-4 h-24 flex items-center justify-center">
+                <!-- EMF UI -->
+                <div id="ui-emf" class="hidden flex bg-gray-900 p-2 rounded border border-gray-700">
+                    <div class="emf-led emf-1 active"></div>
+                    <div class="emf-led emf-2"></div>
+                    <div class="emf-led emf-3"></div>
+                    <div class="emf-led emf-4"></div>
+                    <div class="emf-led emf-5"></div>
+                </div>
+                <!-- Thermometer UI -->
+                <div id="ui-thermo" class="hidden bg-gray-900 text-green-400 font-mono text-3xl p-3 border-4 border-gray-700 rounded shadow-[inset_0_0_10px_#000]">
+                    18.5 °C
+                </div>
+                <!-- Spirit Box UI -->
+                <div id="ui-spiritbox" class="hidden bg-gray-900 text-red-500 font-mono text-2xl p-3 border-2 border-gray-600 rounded flex flex-col items-center min-w-[150px]">
+                    <span id="sb-freq">87.5 FM</span>
+                    <span id="sb-reply" class="text-sm mt-1 h-5 text-white">...</span>
+                </div>
+                <!-- Ghost Writing UI -->
+                <div id="ui-book" class="hidden text-white bg-black/50 p-2 rounded text-center">
+                    Ghost Writing Book<br>
+                    <span class="text-sm text-gray-400">Press F to place on ground</span>
+                </div>
+            </div>
+
+            <!-- Inventory Bar -->
+            <div class="flex" id="inventory-bar">
+                <div class="inv-slot active" id="inv-0">🔦</div>
+                <div class="inv-slot" id="inv-1">📶</div>
+                <div class="inv-slot" id="inv-2">🌡️</div>
+                <div class="inv-slot" id="inv-3">🟣</div>
+                <div class="inv-slot" id="inv-4">📻</div>
+                <div class="inv-slot" id="inv-5">📹</div>
+                <div class="inv-slot" id="inv-6">📖</div>
+            </div>
+            <div class="text-xs text-gray-400 mt-1">Scroll or 1-7 to select</div>
+        </div>
+    </div>
+
+    <!-- Menus (Start, Journal, End) -->
+    <div id="menus">
+        
+        <!-- Start Screen -->
+        <div id="start-screen" class="text-center max-w-2xl bg-black/80 p-4 sm:p-8 rounded border border-gray-700 max-h-[95vh] overflow-y-auto">
+            <h1 class="text-4xl sm:text-5xl font-bold mb-4 text-red-600">PHASMA-CANVAS</h1>
+            <p class="mb-6 text-gray-300">Identify the entity haunting this abandoned house. Gather evidence, consult your journal, and survive.</p>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left text-sm mb-6 bg-gray-900 p-4 rounded">
+                <div>
+                    <h3 class="font-bold text-white mb-2">Controls:</h3>
+                    <ul class="text-gray-400 list-disc pl-4">
+                        <li>WASD: Move (Shift to Run)</li>
+                        <li>Mouse: Look (Click & Drag if needed)</li>
+                        <li>1-7 / Scroll: Change Tool</li>
+                        <li>F: Place Book / Interact door</li>
+                        <li>V: Ask Spirit Box a question</li>
+                        <li>J: Open Journal</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="font-bold text-white mb-2">Tools:</h3>
+                    <ul class="text-gray-400">
+                        <li>🔦 Flashlight (Basic light)</li>
+                        <li>📶 EMF (Finds ghost interactions)</li>
+                        <li>🌡️ Thermometer (Finds cold room)</li>
+                        <li>🟣 UV Light (Reveals fingerprints)</li>
+                        <li>📻 Spirit Box (Ghost speaks to you)</li>
+                        <li>📹 Video Camera (Reveals Ghost Orbs)</li>
+                        <li>📖 Book (Ghost writes in it)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <button id="btn-start" class="bg-red-700 hover:bg-red-600 text-white font-bold py-3 px-8 rounded text-xl transition-colors">ENTER HOUSE</button>
+            <p class="mt-4 text-xs text-gray-500">Audio required. Turn up volume for EMF, Spirit Box, and Ghost sounds.</p>
+        </div>
+
+        <!-- Journal Screen -->
+        <div id="journal-screen" class="hidden absolute top-0 left-0 w-full h-full flex items-center justify-center bg-black/50">
+            <div id="journal">
+                <div class="journal-page">
+                    <h2 class="text-3xl font-bold mb-4 border-b border-gray-400 pb-2">Evidence</h2>
+                    <p class="text-sm italic mb-4">Select evidence you have found to filter ghosts.</p>
+                    <div id="evidence-list" class="flex flex-wrap">
+                        <button class="evidence-btn" data-ev="EMF Level 5">EMF Level 5</button>
+                        <button class="evidence-btn" data-ev="Freezing Temps">Freezing Temps</button>
+                        <button class="evidence-btn" data-ev="Ghost Writing">Ghost Writing</button>
+                        <button class="evidence-btn" data-ev="Spirit Box">Spirit Box</button>
+                        <button class="evidence-btn" data-ev="Fingerprints">Fingerprints</button>
+                        <button class="evidence-btn" data-ev="Ghost Orb">Ghost Orb</button>
+                    </div>
+                    
+                    <h2 class="text-2xl font-bold mt-8 mb-2 border-b border-gray-400 pb-2">Investigation</h2>
+                    <p class="mb-4">Once you are confident, select the ghost type below and head back to the Van to leave.</p>
+                    <div class="font-bold text-red-800">Selected Ghost: <span id="selected-ghost-display">None</span></div>
+                </div>
+                <div class="journal-page">
+                    <h2 class="text-3xl font-bold mb-4 border-b border-gray-400 pb-2">Ghost Types</h2>
+                    <div id="ghost-list" class="h-[400px] overflow-y-auto pr-2">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+            <button id="btn-close-journal" class="absolute top-10 right-10 bg-white text-black px-4 py-2 font-bold rounded">Close Journal (J)</button>
+        </div>
+
+        <!-- End Screen -->
+        <div id="end-screen" class="hidden text-center bg-black/90 p-10 rounded border border-gray-700">
+            <h1 id="end-title" class="text-5xl font-bold mb-4">Investigation Complete</h1>
+            <p id="end-desc" class="text-xl mb-6 text-gray-300"></p>
+            <p class="mb-2">The ghost was a: <strong id="end-actual" class="text-red-500 text-2xl"></strong></p>
+            <p class="mb-6">You guessed: <strong id="end-guess" class="text-blue-400 text-2xl"></strong></p>
+            <button onclick="location.reload()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded">Play Again</button>
+        </div>
+    </div>
+
+<script>
+/**
+ * AUDIO ENGINE (Web Audio API)
+ * Generates all sounds procedurally. No external files!
+ */
+const Audio = {
+    ctx: null,
+    masterGain: null,
+    init() {
+        window.AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.5;
+        this.masterGain.connect(this.ctx.destination);
+    },
+    playBeep(freq, type = 'sine', duration = 0.1, vol = 0.1) {
+        if(!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start();
+        osc.stop(this.ctx.currentTime + duration);
+    },
+    // EMF specific sounds
+    emfTimer: 0,
+    playEMF(level) {
+        if(!this.ctx || level < 2) return;
+        const now = Date.now();
+        const intervals = { 2: 800, 3: 400, 4: 150, 5: 50 };
+        if (now - this.emfTimer > intervals[level]) {
+            this.playBeep(800 + (level * 100), 'square', 0.05, 0.05 * level);
+            this.emfTimer = now;
+        }
+    },
+    // Spirit Box Static
+    sbNoise: null,
+    toggleSpiritBox(on) {
+        if(!this.ctx) return;
+        if (on && !this.sbNoise) {
+            const bufferSize = this.ctx.sampleRate * 2;
+            const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            this.sbNoise = this.ctx.createBufferSource();
+            this.sbNoise.buffer = buffer;
+            this.sbNoise.loop = true;
+            
+            // Bandpass filter to make it sound like a radio
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = 1000;
+            
+            const gain = this.ctx.createGain();
+            gain.gain.value = 0.1;
+
+            this.sbNoise.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.masterGain);
+            this.sbNoise.start();
+        } else if (!on && this.sbNoise) {
+            this.sbNoise.stop();
+            this.sbNoise.disconnect();
+            this.sbNoise = null;
+        }
+    },
+    speak(text) {
+        if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.pitch = 0.2; // Spooky low pitch
+            utterance.rate = 0.7; // Slow
+            utterance.volume = 0.8;
+            window.speechSynthesis.speak(utterance);
+        }
+    },
+    playHeartbeat() {
+        if(!this.ctx) return;
+        this.playBeep(50, 'sine', 0.3, 0.8);
+        setTimeout(() => this.playBeep(50, 'sine', 0.3, 0.6), 300);
+    }
+};
+
+/**
+ * GAME DATA & LOGIC
+ */
+const GHOST_TYPES = [
+    { name: "Spirit", ev: ["EMF Level 5", "Spirit Box", "Ghost Writing"], desc: "Spirits are very common ghosts. They are powerful but easily discovered." },
+    { name: "Wraith", ev: ["EMF Level 5", "Spirit Box", "Freezing Temps"], desc: "Wraiths are dangerous. They never touch the ground and can travel through walls." },
+    { name: "Phantom", ev: ["Spirit Box", "Fingerprints", "Freezing Temps"], desc: "A Phantom can possess the living. Looking at it drops sanity fast." },
+    { name: "Poltergeist", ev: ["Spirit Box", "Fingerprints", "Ghost Writing"], desc: "The noisy ghost. It can throw multiple objects at once." },
+    { name: "Banshee", ev: ["EMF Level 5", "Fingerprints", "Freezing Temps"], desc: "A Banshee will target one specific person until they are dead." },
+    { name: "Jinn", ev: ["EMF Level 5", "Fingerprints", "Ghost Orb"], desc: "A Jinn travels very fast if its victim is far away." },
+    { name: "Mare", ev: ["Spirit Box", "Ghost Orb", "Freezing Temps"], desc: "The Mare is the source of all nightmares, making it most powerful in the dark." },
+    { name: "Revenant", ev: ["EMF Level 5", "Ghost Writing", "Freezing Temps"], desc: "A violent ghost that moves very fast when hunting its prey." },
+    { name: "Shade", ev: ["EMF Level 5", "Ghost Writing", "Ghost Orb"], desc: "A shy ghost. It is hard to find and will stop activity if people are in groups." },
+    { name: "Demon", ev: ["Ghost Writing", "Spirit Box", "Freezing Temps"], desc: "Demons are the most aggressive ghosts and will attack without reason." }
+];
+
+const MAP_LAYOUT = [
+    "WWWWWWWWWWWWWWW",
+    "W111W222W33333W",
+    "W111D222D33333W",
+    "W111W222WWWWWdW",
+    "WWWWWddddWW444W",
+    "V000000000d444W",
+    "WWWWWWWWWWWWWWW"
+];
+// W: Wall, 0: Hallway, 1: Bedroom, 2: Bathroom, 3: Kitchen, 4: Living Room, V: Van Door, D: Room Door, d: Doorway(no door)
+const ROOM_NAMES = {
+    '0': 'Hallway', '1': 'Bedroom', '2': 'Bathroom', '3': 'Kitchen', '4': 'Living Room', 'V': 'Van'
+};
+
+const TILE_SIZE = 2;
+const WALL_HEIGHT = 3;
+
+/**
+ * TEXTURE GENERATOR (Using Canvas)
+ */
+function createColorTexture(color, noise = false) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 256, 256);
+    if (noise) {
+        for (let i = 0; i < 5000; i++) {
+            ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.1})`;
+            ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+        }
+    }
+    return new THREE.CanvasTexture(canvas);
+}
+
+function createFloorTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#4a3c31'; // Wood base
+    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = '#3a2c21';
+    for(let i=0; i<512; i+=32) {
+        ctx.fillRect(0, i, 512, 2); // Planks
+        for(let j=0; j<512; j+=128) {
+            ctx.fillRect(j + (i%64?64:0), i, 2, 32); // Joints
+        }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(10, 10);
+    return tex;
+}
+
+function createHandprintTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#00ff00'; // Neon green for UV
+    // Draw a crude handprint
+    ctx.beginPath();
+    ctx.arc(64, 80, 20, 0, Math.PI * 2); // palm
+    ctx.fill();
+    ctx.lineCap = 'round'; ctx.lineWidth = 10; ctx.strokeStyle = '#00ff00';
+    [[-15, -30], [-5, -40], [10, -35], [25, -20], [-25, -10]].forEach(offset => {
+        ctx.beginPath(); ctx.moveTo(64, 80); ctx.lineTo(64 + offset[0], 80 + offset[1]); ctx.stroke();
+    });
+    return new THREE.CanvasTexture(canvas);
+}
+
+function createBookTexture(written = false) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f0e6d2'; ctx.fillRect(0, 0, 256, 256); // Paper
+    // Lines
+    ctx.strokeStyle = '#add8e6'; ctx.lineWidth = 2;
+    for(let i=40; i<256; i+=20) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(256, i); ctx.stroke(); }
+    if (written) {
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+        ctx.beginPath();
+        for(let i=0; i<20; i++) {
+            ctx.lineTo(Math.random()*200 + 20, Math.random()*200 + 20);
+        }
+        ctx.stroke();
+        ctx.fillStyle = 'red'; ctx.font = "30px 'Courier New'";
+        ctx.fillText("LEAVE", 80, 120);
+    }
+    return new THREE.CanvasTexture(canvas);
+}
+
+/**
+ * MAIN GAME ENGINE
+ */
+const Game = {
+    scene: null, camera: null, renderer: null,
+    walls: [], doors: [], interactables: [],
+    
+    // Player State
+    player: {
+        obj: new THREE.Object3D(),
+        velocity: new THREE.Vector3(),
+        direction: new THREE.Vector3(),
+        speed: 4, sprintSpeed: 7,
+        keys: { w: false, a: false, s: false, d: false, shift: false },
+        pitch: new THREE.Object3D(),
+        currentRoom: 'V',
+        activeTool: 0,
+        bookPlaced: false, bookMesh: null
+    },
+
+    // Ghost State
+    ghost: {
+        type: null,
+        pos: new THREE.Vector3(),
+        targetPos: new THREE.Vector3(),
+        favRoom: '1',
+        roomBounds: {}, // calculated on generation
+        timer: 0,
+        interactionPoints: [], // Where it touched recently (EMF/Fingerprints)
+        orbs: null
+    },
+
+    // Materials
+    mats: {},
+
+    // UI State
+    journalOpen: false,
+    selectedEvidence: new Set(),
+    guessedGhost: null,
+
+    init() {
+        // Setup Three.js
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x020202);
+        this.scene.fog = new THREE.Fog(0x020202, 1, 15); // Creepy fog
+
+        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('game-canvas'), antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+
+        // Materials cache
+        this.mats.wall = new THREE.MeshLambertMaterial({ map: createColorTexture('#6e6e6e', true) });
+        this.mats.floor = new THREE.MeshLambertMaterial({ map: createFloorTexture() });
+        this.mats.ceiling = new THREE.MeshLambertMaterial({ map: createColorTexture('#8a8a8a') });
+        this.mats.door = new THREE.MeshLambertMaterial({ map: createColorTexture('#4a3219') });
+        this.mats.vanWall = new THREE.MeshLambertMaterial({ map: createColorTexture('#b0c4de') });
+        this.mats.handprint = new THREE.MeshBasicMaterial({ map: createHandprintTexture(), transparent: true, opacity: 0 }); // Hidden by default
+
+        this.buildMap();
+        this.setupPlayer();
+        this.setupGhost();
+        this.setupLighting();
+        this.setupUI();
+
+        window.addEventListener('resize', () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        this.lastTime = performance.now();
+        requestAnimationFrame(this.animate.bind(this));
+    },
+
+    buildMap() {
+        const floorGeo = new THREE.PlaneGeometry(MAP_LAYOUT[0].length * TILE_SIZE, MAP_LAYOUT.length * TILE_SIZE);
+        const floor = new THREE.Mesh(floorGeo, this.mats.floor);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set((MAP_LAYOUT[0].length * TILE_SIZE)/2 - TILE_SIZE/2, 0, (MAP_LAYOUT.length * TILE_SIZE)/2 - TILE_SIZE/2);
+        this.scene.add(floor);
+
+        const ceil = new THREE.Mesh(floorGeo, this.mats.ceiling);
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.copy(floor.position);
+        ceil.position.y = WALL_HEIGHT;
+        this.scene.add(ceil);
+
+        const wallGeo = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
+        const doorGeo = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT * 0.8, 0.2);
+
+        // Room bounds for ghost
+        const roomMinMax = {};
+
+        for (let z = 0; z < MAP_LAYOUT.length; z++) {
+            for (let x = 0; x < MAP_LAYOUT[z].length; x++) {
+                const char = MAP_LAYOUT[z][x];
+                const px = x * TILE_SIZE;
+                const pz = z * TILE_SIZE;
+
+                if (char === 'W') {
+                    const isVan = x === 0 && z === 5; // Hacky check near van
+                    const wall = new THREE.Mesh(wallGeo, isVan ? this.mats.vanWall : this.mats.wall);
+                    wall.position.set(px, WALL_HEIGHT / 2, pz);
+                    this.scene.add(wall);
+                    this.walls.push(new THREE.Box3().setFromObject(wall));
+                } else if (char === 'D' || char === 'V') {
+                    const door = new THREE.Mesh(doorGeo, this.mats.door);
+                    door.position.set(px, (WALL_HEIGHT * 0.8) / 2, pz);
+                    if (MAP_LAYOUT[z][x-1] === 'W' && MAP_LAYOUT[z][x+1] === 'W') {
+                         // horizontal wall
+                    } else {
+                        door.rotation.y = Math.PI / 2; // vertical wall
+                    }
+                    this.scene.add(door);
+                    
+                    // Collision box for closed door
+                    door.userData = { 
+                        isOpen: false, 
+                        isVanDoor: char === 'V',
+                        basePos: door.position.clone(),
+                        baseRot: door.rotation.y,
+                        box: new THREE.Box3().setFromObject(door)
+                    };
+                    this.doors.push(door);
+                    this.interactables.push(door);
+                }
+
+                // Calculate room bounds
+                if (/[0-4V]/.test(char)) {
+                    if(!roomMinMax[char]) roomMinMax[char] = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+                    roomMinMax[char].minX = Math.min(roomMinMax[char].minX, px);
+                    roomMinMax[char].maxX = Math.max(roomMinMax[char].maxX, px);
+                    roomMinMax[char].minZ = Math.min(roomMinMax[char].minZ, pz);
+                    roomMinMax[char].maxZ = Math.max(roomMinMax[char].maxZ, pz);
+                }
+            }
+        }
+        this.ghost.roomBounds = roomMinMax;
+    },
+
+    setupPlayer() {
+        this.scene.add(this.player.obj);
+        this.player.obj.position.set(0 * TILE_SIZE, 1.6, 5 * TILE_SIZE); // Start in Van (0, 5)
+        
+        this.player.pitch.add(this.camera);
+        this.player.obj.add(this.player.pitch);
+        this.camera.position.set(0, 0, 0);
+
+        // Flashlight
+        this.flashlight = new THREE.SpotLight(0xffffff, 1, 20, Math.PI/6, 0.5, 2);
+        this.flashlight.position.set(0, 0, 0);
+        this.flashlight.target.position.set(0, 0, -1);
+        this.camera.add(this.flashlight);
+        this.camera.add(this.flashlight.target);
+
+        // UV Light (Blue/Purple)
+        this.uvLight = new THREE.SpotLight(0x8a2be2, 0, 15, Math.PI/4, 0.5, 2);
+        this.camera.add(this.uvLight);
+        this.camera.add(this.uvLight.target);
+        this.uvLight.target.position.set(0,0,-1);
+
+        // Setup mouse look
+        let isDragging = false;
+        document.addEventListener('mousedown', () => isDragging = true);
+        document.addEventListener('mouseup', () => isDragging = false);
+
+        document.addEventListener('mousemove', (e) => {
+            const isLocked = document.pointerLockElement === document.body;
+            if ((isLocked || isDragging) && !this.journalOpen && document.getElementById('menus').classList.contains('hidden')) {
+                const movementX = e.movementX || e.mozMovementX || 0;
+                const movementY = e.movementY || e.mozMovementY || 0;
+                
+                this.player.obj.rotation.y -= movementX * 0.002;
+                this.player.pitch.rotation.x -= movementY * 0.002;
+                this.player.pitch.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.player.pitch.rotation.x));
+            }
+        });
+
+        // Re-lock pointer on canvas click
+        document.getElementById('game-canvas').addEventListener('click', () => {
+            if (!this.journalOpen && document.getElementById('menus').classList.contains('hidden')) {
+                try { document.body.requestPointerLock(); } catch(e) {}
+            }
+        });
+
+        // Setup movement keys
+        window.addEventListener('keydown', (e) => {
+            if(this.journalOpen) {
+                if(e.code === 'KeyJ') this.toggleJournal();
+                return;
+            }
+            const key = e.key.toLowerCase();
+            if (this.player.keys.hasOwnProperty(key)) this.player.keys[key] = true;
+            if (e.code === 'ShiftLeft') this.player.keys.shift = true;
+            
+            // Tool selection
+            if (e.key >= '1' && e.key <= '7') {
+                this.setTool(parseInt(e.key) - 1);
+            }
+            
+            // Interaction
+            if (e.code === 'KeyF') this.interact();
+            
+            // Spirit Box
+            if (e.code === 'KeyV' && this.player.activeTool === 4) this.useSpiritBox();
+
+            // Journal
+            if (e.code === 'KeyJ') this.toggleJournal();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (this.player.keys.hasOwnProperty(key)) this.player.keys[key] = false;
+            if (e.code === 'ShiftLeft') this.player.keys.shift = false;
+        });
+
+        // Scroll wheel for tools
+        window.addEventListener('wheel', (e) => {
+            if(this.journalOpen) return;
+            let current = this.player.activeTool;
+            if (e.deltaY > 0) current = (current + 1) % 7;
+            else current = (current - 1 + 7) % 7;
+            this.setTool(current);
+        });
+
+        document.getElementById('btn-start').addEventListener('click', () => {
+            document.getElementById('menus').classList.add('hidden');
+            window.focus(); // Ensure window gets keyboard events
+            try { document.body.requestPointerLock(); } catch(e) {}
+            Audio.init(); // Initialize audio context on user gesture
+        });
+    },
+
+    setupGhost() {
+        // Pick random ghost
+        this.ghost.type = GHOST_TYPES[Math.floor(Math.random() * GHOST_TYPES.length)];
+        console.log("DEBUG: Ghost is a", this.ghost.type.name);
+
+        // Pick random room (1, 2, 3, or 4)
+        this.ghost.favRoom = (Math.floor(Math.random() * 4) + 1).toString();
+        
+        // Setup initial position in fav room
+        const rb = this.ghost.roomBounds[this.ghost.favRoom];
+        this.ghost.pos.set(
+            rb.minX + Math.random() * (rb.maxX - rb.minX),
+            1.5,
+            rb.minZ + Math.random() * (rb.maxZ - rb.minZ)
+        );
+        this.ghost.targetPos.copy(this.ghost.pos);
+
+        // Setup Ghost Orbs if evidence
+        if (this.ghost.type.ev.includes("Ghost Orb")) {
+            const geo = new THREE.BufferGeometry();
+            const verts = [];
+            for(let i=0; i<30; i++) {
+                verts.push(
+                    rb.minX + Math.random() * (rb.maxX - rb.minX),
+                    0.5 + Math.random() * 2,
+                    rb.minZ + Math.random() * (rb.maxZ - rb.minZ)
+                );
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+            const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.1, transparent: true, opacity: 0.8 });
+            this.ghost.orbs = new THREE.Points(geo, mat);
+            this.ghost.orbs.visible = false;
+            this.scene.add(this.ghost.orbs);
+        }
+    },
+
+    setupLighting() {
+        const ambient = new THREE.AmbientLight(0xffffff, 0.02); // Pitch black almost
+        this.scene.add(ambient);
+        
+        // Van Light
+        const vanLight = new THREE.PointLight(0xaaccff, 0.5, 6);
+        vanLight.position.set(0 * TILE_SIZE, 2, 5 * TILE_SIZE);
+        this.scene.add(vanLight);
+    },
+
+    setupUI() {
+        // Populate Journal Ghost List
+        const ghostListDiv = document.getElementById('ghost-list');
+        GHOST_TYPES.forEach(g => {
+            const btn = document.createElement('button');
+            btn.className = 'ghost-guess-btn';
+            btn.innerHTML = `<span class="font-bold text-lg">${g.name}</span><br><span class="text-sm text-gray-700">${g.ev.join(', ')}</span><br><span class="text-xs italic">${g.desc}</span>`;
+            btn.onclick = () => {
+                document.querySelectorAll('.ghost-guess-btn').forEach(b => b.style.borderColor = '#887');
+                btn.style.borderColor = 'red';
+                this.guessedGhost = g.name;
+                document.getElementById('selected-ghost-display').innerText = g.name;
+            };
+            btn.id = `guess-btn-${g.name}`;
+            ghostListDiv.appendChild(btn);
+        });
+
+        // Evidence Buttons
+        document.querySelectorAll('.evidence-btn').forEach(btn => {
+            btn.onclick = () => {
+                const ev = btn.dataset.ev;
+                if(this.selectedEvidence.has(ev)) {
+                    this.selectedEvidence.delete(ev);
+                    btn.classList.remove('selected');
+                } else {
+                    this.selectedEvidence.add(ev);
+                    btn.classList.add('selected');
+                }
+                this.updateJournalFilters();
+            }
+        });
+
+        document.getElementById('btn-close-journal').onclick = () => this.toggleJournal();
+    },
+
+    updateJournalFilters() {
+        GHOST_TYPES.forEach(g => {
+            const btn = document.getElementById(`guess-btn-${g.name}`);
+            let possible = true;
+            this.selectedEvidence.forEach(ev => {
+                if(!g.ev.includes(ev)) possible = false;
+            });
+            if(possible) btn.classList.remove('impossible');
+            else btn.classList.add('impossible');
+        });
+    },
+
+    setTool(index) {
+        this.player.activeTool = index;
+        
+        // Update Inventory UI
+        for(let i=0; i<7; i++) {
+            document.getElementById(`inv-${i}`).classList.remove('active');
+        }
+        document.getElementById(`inv-${index}`).classList.add('active');
+
+        // Reset lights & Overlays
+        this.flashlight.intensity = 0;
+        this.uvLight.intensity = 0;
+        document.getElementById('camera-overlay').classList.add('hidden');
+        document.getElementById('camera-rec').classList.add('hidden');
+        document.getElementById('ui-emf').classList.add('hidden');
+        document.getElementById('ui-thermo').classList.add('hidden');
+        document.getElementById('ui-spiritbox').classList.add('hidden');
+        document.getElementById('ui-book').classList.add('hidden');
+        Audio.toggleSpiritBox(false);
+
+        if(this.ghost.orbs) this.ghost.orbs.visible = false;
+
+        switch(index) {
+            case 0: // Flashlight
+                this.flashlight.intensity = 1;
+                break;
+            case 1: // EMF
+                document.getElementById('ui-emf').classList.remove('hidden');
+                this.flashlight.intensity = 0.2; // Dim light holding tools
+                break;
+            case 2: // Thermo
+                document.getElementById('ui-thermo').classList.remove('hidden');
+                this.flashlight.intensity = 0.2;
+                break;
+            case 3: // UV
+                this.uvLight.intensity = 1.5;
+                break;
+            case 4: // Spirit Box
+                document.getElementById('ui-spiritbox').classList.remove('hidden');
+                this.flashlight.intensity = 0.2;
+                Audio.toggleSpiritBox(true);
+                break;
+            case 5: // Camera
+                document.getElementById('camera-overlay').classList.remove('hidden');
+                document.getElementById('camera-rec').classList.remove('hidden');
+                if(this.ghost.orbs) this.ghost.orbs.visible = true;
+                // Night vision simulation via ambient light increase? No, just green overlay is fine
+                break;
+            case 6: // Book
+                document.getElementById('ui-book').classList.remove('hidden');
+                this.flashlight.intensity = 0.2;
+                break;
+        }
+    },
+
+    toggleJournal() {
+        this.journalOpen = !this.journalOpen;
+        const screen = document.getElementById('journal-screen');
+        if (this.journalOpen) {
+            screen.classList.remove('hidden');
+            try { document.exitPointerLock(); } catch(e) {}
+        } else {
+            screen.classList.add('hidden');
+            window.focus();
+            try { document.body.requestPointerLock(); } catch(e) {}
+        }
+    },
+
+    interact() {
+        // Raycast forward to find doors or floor
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(0,0), this.camera);
+
+        // Check if holding book to place
+        if (this.player.activeTool === 6 && !this.player.bookPlaced) {
+            const intersectsFloor = raycaster.intersectObject(this.scene.children[0]); // Floor is first
+            if (intersectsFloor.length > 0 && intersectsFloor[0].distance < 3) {
+                // Place book
+                const geo = new THREE.BoxGeometry(0.4, 0.05, 0.6);
+                const mat = new THREE.MeshLambertMaterial({ map: createBookTexture(false) });
+                this.player.bookMesh = new THREE.Mesh(geo, mat);
+                this.player.bookMesh.position.copy(intersectsFloor[0].point);
+                this.player.bookMesh.position.y += 0.025;
+                this.scene.add(this.player.bookMesh);
+                this.player.bookPlaced = true;
+                document.getElementById('ui-book').innerHTML = "Book Placed. Wait for writing.";
+                
+                // Set placing time
+                this.player.bookMesh.userData.placedTime = Date.now();
+                this.player.bookMesh.userData.room = this.getRoomFromPos(this.player.bookMesh.position.x, this.player.bookMesh.position.z);
+            }
+            return;
+        }
+
+        // Check doors
+        const intersects = raycaster.intersectObjects(this.interactables);
+        if (intersects.length > 0 && intersects[0].distance < 3) {
+            const door = intersects[0].object;
+            if (door.userData.isVanDoor) {
+                // End Game Check
+                if (this.player.currentRoom === 'V' && this.guessedGhost) {
+                    this.endGame();
+                } else if (!this.guessedGhost) {
+                    alert("Select a ghost in the journal (J) before leaving!");
+                }
+            } else {
+                // Toggle Room Door
+                door.userData.isOpen = !door.userData.isOpen;
+                if (door.userData.isOpen) {
+                    door.rotation.y = door.userData.baseRot + Math.PI/2;
+                    door.position.x += Math.cos(door.userData.baseRot)*TILE_SIZE/2;
+                    door.position.z += Math.sin(door.userData.baseRot)*TILE_SIZE/2;
+                    // Move collision box away
+                    door.userData.box.min.set(0,0,0); door.userData.box.max.set(0,0,0);
+                } else {
+                    door.rotation.y = door.userData.baseRot;
+                    door.position.copy(door.userData.basePos);
+                    door.userData.box.setFromObject(door);
+                }
+            }
+        }
+    },
+
+    useSpiritBox() {
+        const replyEl = document.getElementById('sb-reply');
+        replyEl.innerText = "Asking...";
+        
+        // Check if in ghost room and ghost has evidence
+        if (this.player.currentRoom === this.ghost.favRoom && this.ghost.type.ev.includes("Spirit Box")) {
+            // 50% chance to respond if conditions met to make it a bit random
+            if (Math.random() > 0.5) {
+                setTimeout(() => {
+                    const responses = ["HERE", "LEAVE", "DEATH", "HATE", "OLD"];
+                    const word = responses[Math.floor(Math.random()*responses.length)];
+                    replyEl.innerText = word;
+                    replyEl.classList.add('text-red-500');
+                    Audio.speak(word);
+                    setTimeout(() => replyEl.innerText = "...", 2000);
+                }, 1000);
+                return;
+            }
+        }
+        
+        setTimeout(() => {
+            replyEl.innerText = "Nothing...";
+            replyEl.classList.remove('text-red-500');
+            setTimeout(() => replyEl.innerText = "...", 1500);
+        }, 1000);
+    },
+
+    getRoomFromPos(x, z) {
+        const gridX = Math.round(x / TILE_SIZE);
+        const gridZ = Math.round(z / TILE_SIZE);
+        if(gridZ >= 0 && gridZ < MAP_LAYOUT.length && gridX >= 0 && gridX < MAP_LAYOUT[0].length) {
+            return MAP_LAYOUT[gridZ][gridX];
+        }
+        return '?';
+    },
+
+    updateGhostLogic(dt) {
+        this.ghost.timer += dt;
+
+        // Roaming
+        if (this.ghost.timer > 3) {
+            this.ghost.timer = 0;
+            // Pick new spot in fav room (80% chance) or adjacent (20%)
+            const rb = this.ghost.roomBounds[this.ghost.favRoom];
+            this.ghost.targetPos.set(
+                rb.minX + Math.random() * (rb.maxX - rb.minX),
+                1.5,
+                rb.minZ + Math.random() * (rb.maxZ - rb.minZ)
+            );
+
+            // Interaction Event (EMF / Fingerprints)
+            if (Math.random() > 0.6) {
+                const point = this.ghost.pos.clone();
+                this.ghost.interactionPoints.push({ pos: point, time: Date.now() });
+                
+                // If has fingerprints, maybe leave one on a nearby wall
+                if (this.ghost.type.ev.includes("Fingerprints") && Math.random() > 0.5) {
+                    this.leaveFingerprint(point);
+                }
+            }
+        }
+
+        // Move ghost slowly
+        this.ghost.pos.lerp(this.ghost.targetPos, 0.01);
+        
+        if (this.ghost.orbs) {
+            // Wiggle orbs
+            const positions = this.ghost.orbs.geometry.attributes.position.array;
+            for(let i=0; i<positions.length; i+=3) {
+                positions[i] += (Math.random()-0.5)*0.01;
+                positions[i+1] += (Math.random()-0.5)*0.01;
+                positions[i+2] += (Math.random()-0.5)*0.01;
+            }
+            this.ghost.orbs.geometry.attributes.position.needsUpdate = true;
+        }
+
+        // Check Book Writing
+        if (this.player.bookPlaced && this.player.bookMesh && !this.player.bookMesh.userData.isWritten) {
+            if (this.ghost.type.ev.includes("Ghost Writing") && this.player.bookMesh.userData.room === this.ghost.favRoom) {
+                // If placed for more than 10 seconds
+                if (Date.now() - this.player.bookMesh.userData.placedTime > 10000) {
+                    this.player.bookMesh.material.map = createBookTexture(true);
+                    this.player.bookMesh.material.needsUpdate = true;
+                    this.player.bookMesh.userData.isWritten = true;
+                }
+            }
+        }
+
+        // Clean up old interactions (last 20 seconds)
+        const now = Date.now();
+        this.ghost.interactionPoints = this.ghost.interactionPoints.filter(p => now - p.time < 20000);
+    },
+
+    leaveFingerprint(pos) {
+        // Find nearest wall
+        let nearestWall = null;
+        let minDist = 3; // Max distance to leave print
+        for(let w of this.walls) {
+            const center = new THREE.Vector3();
+            w.getCenter(center);
+            const dist = center.distanceTo(pos);
+            if(dist < minDist) { minDist = dist; nearestWall = center; }
+        }
+        
+        if(nearestWall) {
+            const geo = new THREE.PlaneGeometry(0.5, 0.5);
+            const mesh = new THREE.Mesh(geo, this.mats.handprint);
+            
+            // Position slightly off the wall center facing out
+            const dir = new THREE.Vector3().subVectors(pos, nearestWall).normalize();
+            // Simplify: just place it at wall center + small offset
+            mesh.position.copy(nearestWall);
+            
+            // Align based on major axis
+            if (Math.abs(dir.x) > Math.abs(dir.z)) {
+                mesh.position.x += Math.sign(dir.x) * (TILE_SIZE/2 + 0.01);
+                mesh.rotation.y = Math.sign(dir.x) > 0 ? 0 : Math.PI;
+            } else {
+                mesh.position.z += Math.sign(dir.z) * (TILE_SIZE/2 + 0.01);
+                mesh.rotation.y = Math.sign(dir.z) > 0 ? Math.PI/2 : -Math.PI/2;
+            }
+            
+            this.scene.add(mesh);
+            mesh.userData.isFingerprint = true;
+        }
+    },
+
+    updateTools() {
+        const pPos = this.player.obj.position;
+        const distToGhost = pPos.distanceTo(this.ghost.pos);
+
+        // --- EMF Reader ---
+        if (this.player.activeTool === 1) {
+            let maxLevel = 1;
+            
+            // Check ghost position
+            if (distToGhost < 4) maxLevel = Math.max(maxLevel, 2);
+            if (distToGhost < 2) maxLevel = Math.max(maxLevel, 3);
+            
+            // Check recent interactions
+            this.ghost.interactionPoints.forEach(p => {
+                if (pPos.distanceTo(p.pos) < 2) {
+                    maxLevel = Math.max(maxLevel, 4);
+                }
+            });
+
+            // If ghost has EMF5 evidence and we hit level 4, randomly bump to 5
+            if (maxLevel >= 4 && this.ghost.type.ev.includes("EMF Level 5") && Math.random() > 0.5) {
+                maxLevel = 5;
+            }
+
+            // Update UI
+            for(let i=1; i<=5; i++) {
+                const el = document.querySelector(`.emf-${i}`);
+                if (i <= maxLevel) el.classList.add('active');
+                else el.classList.remove('active');
+            }
+            Audio.playEMF(maxLevel);
+        }
+
+        // --- Thermometer ---
+        if (this.player.activeTool === 2) {
+            let temp = 15 + Math.random() * 5; // Base temp 15-20 C
+            
+            if (this.player.currentRoom === this.ghost.favRoom) {
+                // Ghost room is colder
+                temp = 2 + Math.random() * 8; // 2-10 C
+                
+                // Freezing evidence
+                if (this.ghost.type.ev.includes("Freezing Temps")) {
+                    temp = -3 + Math.random() * 4; // -3 to 1 C
+                }
+            }
+            document.getElementById('ui-thermo').innerText = temp.toFixed(1) + " °C";
+        }
+
+        // --- UV Light ---
+        if (this.player.activeTool === 3) {
+            // Raycast or distance check for fingerprints to make them visible
+            this.scene.children.forEach(child => {
+                if (child.userData.isFingerprint) {
+                    // Check if looking at it and close
+                    if (child.position.distanceTo(pPos) < 5) {
+                        child.material.opacity = 1;
+                    } else {
+                        child.material.opacity = 0;
+                    }
+                }
+            });
+        } else {
+            // Hide all fingerprints
+            this.scene.children.forEach(child => {
+                if(child.userData.isFingerprint) child.material.opacity = 0;
+            });
+        }
+
+        // --- Spirit Box UI animation ---
+        if (this.player.activeTool === 4) {
+            if(Math.random() > 0.9) {
+                document.getElementById('sb-freq').innerText = (87 + Math.random()*20).toFixed(1) + " FM";
+            }
+        }
+        
+        // --- Ambient Spooks ---
+        if (distToGhost < 2 && Math.random() > 0.98) {
+            Audio.playHeartbeat();
+        }
+    },
+
+    endGame() {
+        document.exitPointerLock();
+        this.journalOpen = true; // prevent input
+        const win = this.guessedGhost === this.ghost.type.name;
+        
+        const endScreen = document.getElementById('end-screen');
+        endScreen.classList.remove('hidden');
+        document.getElementById('menus').classList.remove('hidden');
+        
+        document.getElementById('end-title').innerText = win ? "Contract Completed" : "Investigation Failed";
+        document.getElementById('end-title').className = win ? "text-5xl font-bold mb-4 text-green-500" : "text-5xl font-bold mb-4 text-red-600";
+        document.getElementById('end-desc').innerText = win ? "You successfully identified the entity." : "Your findings were incorrect.";
+        
+        document.getElementById('end-actual').innerText = this.ghost.type.name;
+        document.getElementById('end-guess').innerText = this.guessedGhost || "Nothing";
+    },
+
+    animate() {
+        requestAnimationFrame(this.animate.bind(this));
+        if (this.journalOpen) return;
+
+        const time = performance.now();
+        const dt = (time - this.lastTime) / 1000;
+        this.lastTime = time;
+
+        // Player Movement
+        this.player.velocity.set(0,0,0);
+        if (this.player.keys.w) this.player.velocity.z -= 1;
+        if (this.player.keys.s) this.player.velocity.z += 1;
+        if (this.player.keys.a) this.player.velocity.x -= 1;
+        if (this.player.keys.d) this.player.velocity.x += 1;
+
+        this.player.velocity.normalize();
+        
+        // Apply rotation
+        this.player.direction.copy(this.player.velocity);
+        this.player.direction.applyEuler(new THREE.Euler(0, this.player.obj.rotation.y, 0));
+
+        const speed = this.player.keys.shift ? this.player.sprintSpeed : this.player.speed;
+        
+        // Next position
+        const nextX = this.player.obj.position.x + this.player.direction.x * speed * dt;
+        const nextZ = this.player.obj.position.z + this.player.direction.z * speed * dt;
+
+        // Simple Collision
+        const pBox = new THREE.Box3(
+            new THREE.Vector3(nextX - 0.2, 0, this.player.obj.position.z - 0.2),
+            new THREE.Vector3(nextX + 0.2, 2, this.player.obj.position.z + 0.2)
+        );
+        let colX = false;
+        for(let w of this.walls) { if(pBox.intersectsBox(w)) { colX = true; break; } }
+        for(let d of this.doors) { if(pBox.intersectsBox(d.userData.box)) { colX = true; break; } }
+        if (!colX) this.player.obj.position.x = nextX;
+
+        const pBoxZ = new THREE.Box3(
+            new THREE.Vector3(this.player.obj.position.x - 0.2, 0, nextZ - 0.2),
+            new THREE.Vector3(this.player.obj.position.x + 0.2, 2, nextZ + 0.2)
+        );
+        let colZ = false;
+        for(let w of this.walls) { if(pBoxZ.intersectsBox(w)) { colZ = true; break; } }
+        for(let d of this.doors) { if(pBoxZ.intersectsBox(d.userData.box)) { colZ = true; break; } }
+        if (!colZ) this.player.obj.position.z = nextZ;
+
+        // Update Room indicator
+        const newRoom = this.getRoomFromPos(this.player.obj.position.x, this.player.obj.position.z);
+        if (newRoom !== this.player.currentRoom) {
+            this.player.currentRoom = newRoom;
+            document.getElementById('room-indicator').innerText = "Room: " + (ROOM_NAMES[newRoom] || 'Unknown');
+        }
+
+        this.updateGhostLogic(dt);
+        this.updateTools();
+
+        this.renderer.render(this.scene, this.camera);
+    }
+};
+
+window.onload = () => Game.init();
+</script>
+</body>
+</html>
