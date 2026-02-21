@@ -523,7 +523,7 @@ const Game = {
 
     setupPlayer() {
         this.scene.add(this.player.obj);
-        this.player.obj.position.set(0 * TILE_SIZE, 1.6, 5 * TILE_SIZE); // Start in Van (0, 5)
+        this.player.obj.position.set(0.5 * TILE_SIZE, 1.6, 5 * TILE_SIZE); // Spawn slightly forward so you don't get stuck inside the Van door!
         
         this.player.pitch.add(this.camera);
         this.player.obj.add(this.player.pitch);
@@ -548,7 +548,8 @@ const Game = {
         document.addEventListener('mouseup', () => isDragging = false);
 
         document.addEventListener('mousemove', (e) => {
-            const isLocked = document.pointerLockElement === document.body;
+            const canvas = document.getElementById('game-canvas');
+            const isLocked = document.pointerLockElement === canvas || document.pointerLockElement === document.body;
             if ((isLocked || isDragging) && !this.journalOpen && document.getElementById('menus').classList.contains('hidden')) {
                 const movementX = e.movementX || e.mozMovementX || 0;
                 const movementY = e.movementY || e.mozMovementY || 0;
@@ -562,19 +563,23 @@ const Game = {
         // Re-lock pointer on canvas click
         document.getElementById('game-canvas').addEventListener('click', () => {
             if (!this.journalOpen && document.getElementById('menus').classList.contains('hidden')) {
-                try { document.body.requestPointerLock(); } catch(e) {}
+                try { document.getElementById('game-canvas').requestPointerLock(); } catch(e) {}
             }
         });
 
         // Setup movement keys
         window.addEventListener('keydown', (e) => {
+            const isJ = e.code === 'KeyJ' || e.key.toLowerCase() === 'j';
+            const isF = e.code === 'KeyF' || e.key.toLowerCase() === 'f';
+            const isV = e.code === 'KeyV' || e.key.toLowerCase() === 'v';
+
             if(this.journalOpen) {
-                if(e.code === 'KeyJ') this.toggleJournal();
+                if(isJ) this.toggleJournal();
                 return;
             }
             const key = e.key.toLowerCase();
             if (this.player.keys.hasOwnProperty(key)) this.player.keys[key] = true;
-            if (e.code === 'ShiftLeft') this.player.keys.shift = true;
+            if (e.code === 'ShiftLeft' || e.key === 'Shift') this.player.keys.shift = true;
             
             // Tool selection
             if (e.key >= '1' && e.key <= '7') {
@@ -582,19 +587,19 @@ const Game = {
             }
             
             // Interaction
-            if (e.code === 'KeyF') this.interact();
+            if (isF) this.interact();
             
             // Spirit Box
-            if (e.code === 'KeyV' && this.player.activeTool === 4) this.useSpiritBox();
+            if (isV && this.player.activeTool === 4) this.useSpiritBox();
 
             // Journal
-            if (e.code === 'KeyJ') this.toggleJournal();
+            if (isJ) this.toggleJournal();
         });
 
         window.addEventListener('keyup', (e) => {
             const key = e.key.toLowerCase();
             if (this.player.keys.hasOwnProperty(key)) this.player.keys[key] = false;
-            if (e.code === 'ShiftLeft') this.player.keys.shift = false;
+            if (e.code === 'ShiftLeft' || e.key === 'Shift') this.player.keys.shift = false;
         });
 
         // Scroll wheel for tools
@@ -609,7 +614,7 @@ const Game = {
         document.getElementById('btn-start').addEventListener('click', () => {
             document.getElementById('menus').classList.add('hidden');
             window.focus(); // Ensure window gets keyboard events
-            try { document.body.requestPointerLock(); } catch(e) {}
+            try { document.getElementById('game-canvas').requestPointerLock(); } catch(e) {}
             Audio.init(); // Initialize audio context on user gesture
         });
     },
@@ -771,7 +776,7 @@ const Game = {
         } else {
             screen.classList.add('hidden');
             window.focus();
-            try { document.body.requestPointerLock(); } catch(e) {}
+            try { document.getElementById('game-canvas').requestPointerLock(); } catch(e) {}
         }
     },
 
@@ -1040,7 +1045,7 @@ const Game = {
     },
 
     endGame() {
-        document.exitPointerLock();
+        try { document.exitPointerLock(); } catch(e) {}
         this.journalOpen = true; // prevent input
         const win = this.guessedGhost === this.ghost.type.name;
         
